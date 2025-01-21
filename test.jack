@@ -1,0 +1,7 @@
+class Main {
+    field char x, y;
+    field int  size;
+
+    method void run(int n_args, boolean needed) {
+    }
+}
