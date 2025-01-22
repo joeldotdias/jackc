@@ -1,7 +1,7 @@
 pub struct Lexer<'src> {
     source: &'src str,
     pos: usize,
-    peeked: Option<Result<Token<'src>, String>>,
+    pub peeked: Option<Result<Token<'src>, String>>,
 }
 
 #[derive(Debug, PartialEq)]

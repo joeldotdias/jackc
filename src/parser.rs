@@ -52,8 +52,6 @@ impl<'src> Parser<'src> {
             if self.lexer.peek() == Some(&Ok(Token::RCurly)) {
                 break;
             }
-
-            println!("{:?}", tok);
         }
 
         self.lexer.expect(Token::RCurly, "missing }")?;
@@ -65,7 +63,7 @@ impl<'src> Parser<'src> {
         })
     }
 
-    pub fn parse_class_var(
+    fn parse_class_var(
         &mut self,
         kind: &Token,
     ) -> Result<(ClassVarKind, Type<'src>, Vec<&'src str>), String> {
@@ -82,7 +80,6 @@ impl<'src> Parser<'src> {
 
         let mut vars = vec![];
         while let Some(Ok(tok)) = self.lexer.next() {
-            println!("Parsing class, vars {:?}", tok);
             match tok {
                 Token::Ident(label) => {
                     vars.push(label);
@@ -96,7 +93,7 @@ impl<'src> Parser<'src> {
         Ok((kind, ty, vars))
     }
 
-    pub fn parse_subroutine(&mut self, kind: &Token) -> Result<Subroutine<'src>, String> {
+    fn parse_subroutine(&mut self, kind: &Token) -> Result<Subroutine<'src>, String> {
         let kind = match kind {
             Token::Method => SubroutineKind::Method,
             Token::Function => SubroutineKind::Function,
@@ -107,30 +104,16 @@ impl<'src> Parser<'src> {
             ),
         };
 
-        println!("Kind {:?}", kind);
-
         let return_type = match self.lexer.next() {
             Some(tok) => Type::try_from(&tok?)?,
             None => return Err("Expected Type".into()),
         };
-        println!("Type {:?}", return_type);
 
-        let name = match self.lexer.next().unwrap() {
-            Ok(t) => {
-                if let Token::Ident(label) = t {
-                    label
-                } else {
-                    return Err(format!("Expected ident | Received {:?}", t));
-                }
-            }
-            Err(e) => return Err(e),
-        };
-        println!("Name {}", name);
+        let name = self.parse_ident()?;
 
         self.lexer.expect(Token::LParen, "Missing (")?;
         let mut params = vec![];
         while let Some(Ok(tok)) = self.lexer.next() {
-            println!("Parsing params {:?}", tok);
             match tok {
                 Token::Int | Token::Char | Token::Boolean | Token::Ident(_) => {
                     let ty = Type::try_from(&tok)?;
@@ -164,12 +147,12 @@ impl<'src> Parser<'src> {
         })
     }
 
-    pub fn parse_block(&mut self) -> Result<Vec<TokenTree<'src>>, String> {
+    fn parse_block(&mut self) -> Result<Vec<TokenTree<'src>>, String> {
         self.lexer.expect(Token::LCurly, "Missing {")?;
         let mut block = vec![];
 
-        while let Some(Ok(lhs)) = self.lexer.next() {
-            let stmt = match lhs {
+        while let Some(Ok(tok)) = self.lexer.next() {
+            let stmt = match tok {
                 Token::Let => self.parse_let_stmt()?,
                 Token::RCurly => break,
                 _ => todo!(),
@@ -182,46 +165,133 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_let_stmt(&mut self) -> ParseResult<'src> {
-        todo!()
+        let var_name = self.parse_ident()?;
+        self.lexer.expect(Token::Eq, "Expected =")?;
+        let value = Box::new(self.parse_expr()?);
+        self.lexer.expect(Token::SemiColon, "Expected ;")?;
+
+        Ok(TokenTree::LetStmt { var_name, value })
     }
 
-    /*
-    pub fn parse_expr_within(&mut self, min_binding_pow: u8) -> Result<TokenTree<'src>, String> {
-        let lhs = match self.lexer.next() {
-            Some(Ok(token)) => token,
-            None => return Ok(TokenTree::Atom(Atom::Null)),
-            Some(Err(e)) => return Err(e),
-        };
+    fn parse_expr(&mut self) -> ParseResult<'src> {
+        let mut lhs = if let Some(Ok(l_tok)) = self.lexer.next() {
+            match l_tok {
+                Token::Ident(label) => TokenTree::Atom(Atom::Ident(label)),
+                Token::IntLiteral(n) => TokenTree::Atom(Atom::Int(n)),
+                Token::CharLiteral(c) => TokenTree::Atom(Atom::Char(c)),
+                Token::StrLiteral(s) => TokenTree::Atom(Atom::String(Cow::Borrowed(s))),
+                Token::True => TokenTree::Atom(Atom::Bool(true)),
+                Token::False => TokenTree::Atom(Atom::Bool(false)),
+                Token::This => TokenTree::Atom(Atom::This),
 
-        let mut lhs = match lhs {
-            Token::StrLiteral(s) => TokenTree::Atom(Atom::String(Cow::Borrowed(s))),
-            Token::IntLiteral(n) => TokenTree::Atom(Atom::Int(n)),
-            Token::True => TokenTree::Atom(Atom::Bool(true)),
-            Token::False => TokenTree::Atom(Atom::Bool(false)),
-            Token::Null => TokenTree::Atom(Atom::Null),
-            Token::Ident(label) => TokenTree::Atom(Atom::Ident(label)),
-            Token::This => TokenTree::Atom(Atom::This),
+                Token::Not | Token::Minus => {
+                    let op = match l_tok {
+                        Token::Not => Op::Not,
+                        Token::Minus => Op::Minus,
+                        _ => return Err(format!("Supports only - or ! | Received {:?}", l_tok)),
+                    };
+                    let expr = self.parse_expr()?;
 
-            Token::LParen => {
-                let lhs = self.parse_expr_within(0)?;
-                self.lexer
-                    .expect(Token::RParen, "Unexpected end to parentheses enclosed expr")?;
-                // TokenTree::C
+                    TokenTree::UnaryExpr(op, Box::new(expr))
+                }
 
-                todo!()
+                Token::LParen => {
+                    let expr = self.parse_expr()?;
+                    self.lexer.expect(Token::RParen, "Missing )")?;
+                    TokenTree::ParenExpr(Box::new(expr))
+                }
+
+                token => return Err(format!("Unexpected {:?}", token)),
             }
-
-            _ => todo!(),
+        } else {
+            return Err("Expected token".into());
         };
 
-        todo!()
-    } */
+        while self.lexer.peek() != Some(&Ok(Token::SemiColon)) {
+            match &self.lexer.peeked {
+                Some(r_tok) => {
+                    let r_tok = r_tok.as_ref()?;
+                    match r_tok {
+                        Token::Plus
+                        | Token::Minus
+                        | Token::Asterisk
+                        | Token::FSlash
+                        | Token::Eq
+                        | Token::Gt
+                        | Token::Lt
+                        | Token::Amper
+                        | Token::Bar => {
+                            let op = Op::try_from(r_tok)?;
+                            self.lexer.next();
+                            let rhs = self.parse_expr()?;
+                            lhs = TokenTree::BinaryExpr(Box::new(lhs), op, Box::new(rhs));
+                        }
+
+                        Token::LParen => {
+                            self.lexer.next();
+                            let mut args = vec![];
+                            /* while self.lexer.peek() != Some(&Ok(Token::RParen)) {
+                                let arg = self.parse_expr()?;
+                                args.push(arg);
+                            } */
+
+                            while let Some(Ok(tok)) = self.lexer.next() {
+                                match tok {
+                                    Token::Comma => continue,
+                                    Token::RParen => break,
+                                    _ => {
+                                        // fix this
+                                        println!("In args : {:?}", tok);
+                                        let arg = self.parse_expr()?;
+                                        args.push(arg);
+                                    }
+                                }
+                            }
+
+                            lhs = TokenTree::Call {
+                                callee: Box::new(lhs),
+                                args,
+                            }
+                        }
+
+                        Token::LSquare => {
+                            self.lexer.next();
+                            let index = self.parse_expr()?;
+                            self.lexer.expect(Token::RSquare, "Missing ]")?;
+                            lhs = TokenTree::ArrayIndex {
+                                arr: Box::new(lhs),
+                                index: Box::new(index),
+                            }
+                        }
+                        _ => return Ok(lhs),
+                    }
+                }
+                None => todo!(),
+            }
+        }
+
+        Ok(lhs)
+    }
+
+    fn parse_ident(&mut self) -> Result<&'src str, String> {
+        match self.lexer.next().unwrap() {
+            Ok(t) => {
+                if let Token::Ident(label) = t {
+                    Ok(label)
+                } else {
+                    return Err(format!("Expected ident | Received {:?}", t));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Atom<'src> {
-    String(Cow<'src, str>),
     Int(u16),
+    Char(char),
+    String(Cow<'src, str>),
     Bool(bool),
     Ident(&'src str),
     This,
@@ -247,7 +317,6 @@ pub enum TokenTree<'src> {
         subroutines: Vec<Subroutine<'src>>,
     },
 
-    // Subroutine(Subroutine<'src>),
     VarDecl(Type<'src>, Vec<&'src str>),
     LetStmt {
         var_name: &'src str,
@@ -327,4 +396,23 @@ pub enum Op {
     LessThan,
     GreaterThan,
     Equals,
+}
+
+impl TryFrom<&Token<'_>> for Op {
+    type Error = String;
+
+    fn try_from(value: &Token<'_>) -> Result<Self, Self::Error> {
+        match value {
+            Token::Plus => Ok(Op::Plus),
+            Token::Minus => Ok(Op::Minus),
+            Token::Asterisk => Ok(Op::Multiply),
+            Token::FSlash => Ok(Op::Divide),
+            Token::Eq => Ok(Op::Equals),
+            Token::Gt => Ok(Op::GreaterThan),
+            Token::Lt => Ok(Op::LessThan),
+            Token::Amper => Ok(Op::And),
+            Token::Bar => Ok(Op::Or),
+            _ => Err(format!("{:?} is not a valid operator", value)),
+        }
+    }
 }

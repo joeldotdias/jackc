@@ -3,5 +3,8 @@ class Main {
     field int  size;
 
     method void run(int n_args, boolean needed) {
+        let a = 5 + 8;
+        let b = a[6 + 0 - 8];
+        let c = undefinedFn(a);
     }
 }
