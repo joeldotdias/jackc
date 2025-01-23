@@ -2,9 +2,25 @@ class Main {
     field char x, y;
     field int  size;
 
-    method void run(int n_args, boolean needed) {
+    method String run(int n_args, boolean needed) {
         let a = 5 + 8;
         let b = a[6 + 0 - 8];
-        let c = undefinedFn(a);
+        var boolean flag_a, flag_b;
+        let c = abc.undefinedFn(a, b, 90 + -17);
+
+        if(c = 7) {
+            let c = 9;
+            let a = undef(c);
+            do whatever();
+        } else {
+            let c = 10;
+            do Ht.insert("abc", 77);
+        }
+
+        while(c < 10 & ~(c = 1)) {
+            let c = c + 1;
+        }
+
+        return c;
     }
 }

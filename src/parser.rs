@@ -46,7 +46,7 @@ impl<'src> Parser<'src> {
                     subroutines.push(subroutine);
                 }
                 Token::Eof => break,
-                _ => todo!(),
+                _ => return Err(format!("While parsing class Unexpected {:?}", tok)),
             };
 
             if self.lexer.peek() == Some(&Ok(Token::RCurly)) {
@@ -154,8 +154,70 @@ impl<'src> Parser<'src> {
         while let Some(Ok(tok)) = self.lexer.next() {
             let stmt = match tok {
                 Token::Let => self.parse_let_stmt()?,
+                Token::Return => {
+                    if self.lexer.peek() == Some(&Ok(Token::SemiColon)) {
+                        self.lexer.next();
+                        TokenTree::ReturnStmt(None)
+                    } else {
+                        let ret_val = self.parse_expr()?;
+                        self.lexer.expect(Token::SemiColon, "Missing ;")?;
+                        TokenTree::ReturnStmt(Some(Box::new(ret_val)))
+                    }
+                }
+                Token::Var => {
+                    let ty = Type::try_from(&self.lexer.next().unwrap()?)?;
+                    let mut vars = vec![];
+                    while let Some(Ok(v_tok)) = self.lexer.next() {
+                        let var = match v_tok {
+                            Token::Ident(label) => label,
+                            Token::Comma => continue,
+                            Token::SemiColon => break,
+                            _ => {
+                                return Err(format!(
+                                    "Unexpected {:?} while parsing var declaration",
+                                    v_tok
+                                ))
+                            }
+                        };
+                        vars.push(var);
+                    }
+                    TokenTree::VarDecl(ty, vars)
+                }
+                Token::If => {
+                    self.lexer.expect(Token::LParen, "Missing (")?;
+                    let cond = Box::new(self.parse_expr()?);
+                    self.lexer.expect(Token::RParen, "Missing)")?;
+                    println!("Here {:?}", cond);
+                    let true_branch = self.parse_block()?;
+                    println!("True {:?}", true_branch);
+                    let false_branch = if self.lexer.peek() == Some(&Ok(Token::Else)) {
+                        self.lexer.next();
+                        Some(self.parse_block()?)
+                    } else {
+                        None
+                    };
+
+                    TokenTree::IfStmt {
+                        cond,
+                        true_branch,
+                        false_branch,
+                    }
+                }
+                Token::While => {
+                    self.lexer.expect(Token::LParen, "Missing (")?;
+                    let cond = Box::new(self.parse_expr()?);
+                    self.lexer.expect(Token::RParen, "Missing )")?;
+                    let body = self.parse_block()?;
+
+                    TokenTree::WhileStmt { cond, body }
+                }
+                Token::Do => {
+                    let subroutine_call = self.parse_expr()?;
+                    self.lexer.expect(Token::SemiColon, "Missing ;")?;
+                    TokenTree::DoStmt(Box::new(subroutine_call))
+                }
                 Token::RCurly => break,
-                _ => todo!(),
+                _ => return Err(format!("Unexpected {:?}", tok)),
             };
 
             block.push(stmt);
@@ -183,6 +245,7 @@ impl<'src> Parser<'src> {
                 Token::True => TokenTree::Atom(Atom::Bool(true)),
                 Token::False => TokenTree::Atom(Atom::Bool(false)),
                 Token::This => TokenTree::Atom(Atom::This),
+                Token::Null => TokenTree::Atom(Atom::Null),
 
                 Token::Not | Token::Minus => {
                     let op = match l_tok {
@@ -200,7 +263,6 @@ impl<'src> Parser<'src> {
                     self.lexer.expect(Token::RParen, "Missing )")?;
                     TokenTree::ParenExpr(Box::new(expr))
                 }
-
                 token => return Err(format!("Unexpected {:?}", token)),
             }
         } else {
@@ -230,30 +292,25 @@ impl<'src> Parser<'src> {
                         Token::LParen => {
                             self.lexer.next();
                             let mut args = vec![];
-                            /* while self.lexer.peek() != Some(&Ok(Token::RParen)) {
+                            if self.lexer.peek() != Some(&Ok(Token::RParen)) {
                                 let arg = self.parse_expr()?;
                                 args.push(arg);
-                            } */
-
-                            while let Some(Ok(tok)) = self.lexer.next() {
-                                match tok {
-                                    Token::Comma => continue,
-                                    Token::RParen => break,
-                                    _ => {
-                                        // fix this
-                                        println!("In args : {:?}", tok);
-                                        let arg = self.parse_expr()?;
-                                        args.push(arg);
-                                    }
-                                }
                             }
 
+                            while self.lexer.peek() == Some(&Ok(Token::Comma)) {
+                                self.lexer.next();
+                                let arg = self.parse_expr()?;
+                                args.push(arg);
+                            }
+
+                            self.lexer.expect(Token::RParen, "Missing )")?;
+
                             lhs = TokenTree::Call {
+                                prefix: None,
                                 callee: Box::new(lhs),
                                 args,
                             }
                         }
-
                         Token::LSquare => {
                             self.lexer.next();
                             let index = self.parse_expr()?;
@@ -261,6 +318,31 @@ impl<'src> Parser<'src> {
                             lhs = TokenTree::ArrayIndex {
                                 arr: Box::new(lhs),
                                 index: Box::new(index),
+                            }
+                        }
+                        Token::Dot => {
+                            self.lexer.next();
+                            let ident = TokenTree::Atom(Atom::Ident(self.parse_ident()?));
+
+                            self.lexer.expect(Token::LParen, "Missing (")?;
+                            let mut args = vec![];
+                            if self.lexer.peek() != Some(&Ok(Token::RParen)) {
+                                let arg = self.parse_expr()?;
+                                args.push(arg);
+                            }
+
+                            while self.lexer.peek() == Some(&Ok(Token::Comma)) {
+                                self.lexer.next();
+                                let arg = self.parse_expr()?;
+                                args.push(arg);
+                            }
+
+                            self.lexer.expect(Token::RParen, "Missing )")?;
+
+                            lhs = TokenTree::Call {
+                                prefix: Some(Box::new(lhs)),
+                                callee: Box::new(ident),
+                                args,
                             }
                         }
                         _ => return Ok(lhs),
@@ -338,6 +420,7 @@ pub enum TokenTree<'src> {
         index: Box<TokenTree<'src>>,
     },
     Call {
+        prefix: Option<Box<TokenTree<'src>>>,
         callee: Box<TokenTree<'src>>,
         args: Vec<TokenTree<'src>>,
     },

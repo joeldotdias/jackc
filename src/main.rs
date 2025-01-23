@@ -16,10 +16,10 @@ fn main() {
     let source = fs::read_to_string(&filepath).unwrap();
     let lexer = Lexer::new(&source);
 
-    lexer.for_each(|tok| match tok {
+    /* lexer.for_each(|tok| match tok {
         Ok(t) => println!("{:?}", t),
         Err(e) => println!("Error: {}", e),
-    });
+    }); */
 
     let mut parser = Parser::new(&source);
     let ast = parser.parse_class();
